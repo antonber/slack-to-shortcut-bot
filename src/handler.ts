@@ -1,22 +1,22 @@
-import { ReactionAddedEvent } from "./types";
+import { AppMentionEvent } from "./types";
 import { fetchThread, postThreadReply, getPermalink } from "./slack";
 import { generateTicket } from "./agent";
 import { createStory } from "./shortcut";
 
-export async function handleTicketReaction(
-  event: ReactionAddedEvent
-): Promise<void> {
-  const { channel, ts } = event.item;
+export async function handleMention(event: AppMentionEvent): Promise<void> {
+  const { channel } = event;
+  // Use the thread parent if this is in a thread, otherwise the message itself
+  const threadTs = event.thread_ts ?? event.ts;
 
   try {
     // 1. Fetch the thread
-    const messages = await fetchThread(channel, ts);
+    const messages = await fetchThread(channel, threadTs);
 
     // 2. Generate ticket via Claude
     const ticket = await generateTicket(messages);
 
     // 3. Get Slack thread permalink
-    const permalink = await getPermalink(channel, ts);
+    const permalink = await getPermalink(channel, threadTs);
 
     // 4. Replace placeholder in description
     ticket.description = ticket.description.replace(
@@ -35,16 +35,15 @@ export async function handleTicketReaction(
       `${story.url}\n` +
       `Type: ${ticket.story_type} · Estimate: ${estimate}`;
 
-    await postThreadReply(channel, ts, reply);
+    await postThreadReply(channel, threadTs, reply);
   } catch (error) {
-    const reason =
-      error instanceof Error ? error.message : "Unknown error";
+    const reason = error instanceof Error ? error.message : "Unknown error";
     console.error("Failed to create ticket:", error);
 
     try {
       await postThreadReply(
         channel,
-        ts,
+        threadTs,
         `❌ Failed to create ticket: ${reason}`
       );
     } catch (replyError) {

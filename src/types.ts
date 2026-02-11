@@ -13,14 +13,12 @@ export interface ShortcutTicket {
   estimate: number | null;
 }
 
-export interface ReactionAddedEvent {
-  type: "reaction_added";
+export interface AppMentionEvent {
+  type: "app_mention";
   user: string;
-  reaction: string;
-  item: {
-    type: "message";
-    channel: string;
-    ts: string;
-  };
+  text: string;
+  channel: string;
+  ts: string;
+  thread_ts?: string;
   event_ts: string;
 }

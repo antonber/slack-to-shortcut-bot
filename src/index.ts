@@ -1,9 +1,8 @@
 import "dotenv/config";
 import express from "express";
 import crypto from "crypto";
-import { ReactionAddedEvent } from "./types";
-import { handleTicketReaction } from "./handler";
-import { getBotUserId } from "./slack";
+import { AppMentionEvent } from "./types";
+import { handleMention } from "./handler";
 
 const app = express();
 
@@ -47,17 +46,14 @@ function verifySlackSignature(req: express.Request): boolean {
 // Duplicate detection: track processed events
 const processedEvents = new Set<string>();
 
-function dedupeKey(event: ReactionAddedEvent): string {
-  return `${event.item.channel}:${event.item.ts}`;
+function dedupeKey(event: AppMentionEvent): string {
+  return `${event.channel}:${event.thread_ts ?? event.ts}`;
 }
 
 function markProcessed(key: string): void {
   processedEvents.add(key);
   setTimeout(() => processedEvents.delete(key), 5 * 60 * 1000);
 }
-
-// Cache bot user ID
-let botUserId: string | null = null;
 
 app.post("/slack/events", async (req, res) => {
   // URL verification challenge
@@ -71,26 +67,9 @@ app.post("/slack/events", async (req, res) => {
     return res.status(401).send("Invalid signature");
   }
 
-  const event = req.body?.event as ReactionAddedEvent | undefined;
+  const event = req.body?.event as AppMentionEvent | undefined;
 
-  if (!event || event.type !== "reaction_added") {
-    return res.status(200).send("ok");
-  }
-
-  // Only handle :ticket: emoji
-  if (event.reaction !== "ticket") {
-    return res.status(200).send("ok");
-  }
-
-  // Ignore bot's own reactions
-  if (!botUserId) {
-    try {
-      botUserId = await getBotUserId();
-    } catch {
-      // If we can't get bot ID, proceed anyway
-    }
-  }
-  if (botUserId && event.user === botUserId) {
+  if (!event || event.type !== "app_mention") {
     return res.status(200).send("ok");
   }
 
@@ -104,8 +83,8 @@ app.post("/slack/events", async (req, res) => {
   // Return 200 immediately, handle async
   res.status(200).send("ok");
 
-  handleTicketReaction(event).catch((err) => {
-    console.error("Unhandled error in ticket handler:", err);
+  handleMention(event).catch((err) => {
+    console.error("Unhandled error in mention handler:", err);
   });
 });
 
