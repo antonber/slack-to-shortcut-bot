@@ -11,7 +11,6 @@ export async function createStory(
   ticket: ShortcutTicket
 ): Promise<{ id: number; url: string }> {
   const token = process.env.SHORTCUT_API_TOKEN;
-  const projectId = Number(process.env.SHORTCUT_PROJECT_ID);
   const workflowStateId = Number(process.env.SHORTCUT_WORKFLOW_STATE_ID);
 
   if (!token) throw new Error("SHORTCUT_API_TOKEN is not set");
@@ -20,10 +19,13 @@ export async function createStory(
     name: ticket.name,
     description: ticket.description,
     story_type: ticket.story_type,
-    project_id: projectId,
     workflow_state_id: workflowStateId,
     labels: ticket.labels.map((name) => ({ name })),
   };
+
+  if (process.env.SHORTCUT_PROJECT_ID) {
+    body.project_id = Number(process.env.SHORTCUT_PROJECT_ID);
+  }
 
   if (ticket.estimate !== null) {
     body.estimate = ticket.estimate;

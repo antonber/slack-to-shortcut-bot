@@ -15,7 +15,7 @@ oauth_config:
       - chat:write
 settings:
   event_subscriptions:
-    request_url: https://YOUR_RAILWAY_URL.up.railway.app/slack/events
+    request_url: https://slack-to-shortcut-bot-production.up.railway.app/slack/events
     bot_events:
       - app_mention
   org_deploy_enabled: false
