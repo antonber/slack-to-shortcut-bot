@@ -1,50 +1,44 @@
 import { AppMentionEvent } from "./types";
-import { fetchThread, postThreadReply, getPermalink } from "./slack";
-import { generateTicket } from "./agent";
-import { createStory } from "./shortcut";
+import { fetchThread, postThreadReply, getPermalink, getBotUserId } from "./slack";
+import { runAgent } from "./agent";
 
 export async function handleMention(event: AppMentionEvent): Promise<void> {
   const { channel } = event;
-  // Use the thread parent if this is in a thread, otherwise the message itself
   const threadTs = event.thread_ts ?? event.ts;
 
   try {
-    // 1. Fetch the thread
+    // 0. Acknowledge
+    await postThreadReply(channel, threadTs, "🤖 On it...");
+
+    // 1. Strip bot mention from the user's message to get their instruction
+    const botUserId = await getBotUserId();
+    const userInstruction =
+      event.text.replace(new RegExp(`<@${botUserId}>`, "g"), "").trim() ||
+      "Create a ticket for this thread";
+
+    // 2. Fetch thread context
     const messages = await fetchThread(channel, threadTs);
 
-    // 2. Generate ticket via Claude
-    const ticket = await generateTicket(messages);
-
-    // 3. Get Slack thread permalink
+    // 3. Get permalink for Slack thread reference
     const permalink = await getPermalink(channel, threadTs);
 
-    // 4. Replace placeholder in description
-    ticket.description = ticket.description.replace(
-      /\{\{SLACK_THREAD_URL\}\}/g,
-      permalink
-    );
+    // 4. Run the agent
+    let response = await runAgent(messages, userInstruction);
 
-    // 5. Create Shortcut story
-    const story = await createStory(ticket);
+    // 5. Replace any Slack URL placeholders the agent may have used
+    response = response.replace(/\{\{SLACK_THREAD_URL\}\}/g, permalink);
 
-    // 6. Reply in thread
-    const estimate =
-      ticket.estimate !== null ? `${ticket.estimate}pt` : "Unestimated";
-    const reply =
-      `✅ Shortcut ticket created: *${ticket.name}*\n` +
-      `${story.url}\n` +
-      `Type: ${ticket.story_type} · Estimate: ${estimate}`;
-
-    await postThreadReply(channel, threadTs, reply);
+    // 6. Post the agent's response
+    await postThreadReply(channel, threadTs, response);
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Unknown error";
-    console.error("Failed to create ticket:", error);
+    console.error("Agent error:", error);
 
     try {
       await postThreadReply(
         channel,
         threadTs,
-        `❌ Failed to create ticket: ${reason}`
+        `❌ Something went wrong: ${reason}`
       );
     } catch (replyError) {
       console.error("Failed to post error reply:", replyError);

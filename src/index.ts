@@ -47,7 +47,7 @@ function verifySlackSignature(req: express.Request): boolean {
 const processedEvents = new Set<string>();
 
 function dedupeKey(event: AppMentionEvent): string {
-  return `${event.channel}:${event.thread_ts ?? event.ts}`;
+  return `${event.channel}:${event.event_ts}`;
 }
 
 function markProcessed(key: string): void {

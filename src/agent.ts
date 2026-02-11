@@ -1,31 +1,11 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { SlackMessage, ShortcutTicket } from "./types";
+import { SlackMessage } from "./types";
+import { SYSTEM_PROMPT } from "./system-prompt";
+import { tools, executeTool } from "./tools";
 
 const anthropic = new Anthropic();
 
-const SYSTEM_PROMPT = `You are a project management assistant. Given a Slack thread, create a Shortcut (project management tool) story.
-
-Analyze the thread to determine:
-1. What is being requested or discussed
-2. Any technical details or requirements mentioned
-3. Who is involved and any assignments implied
-4. Priority/urgency signals
-
-Respond with ONLY valid JSON in this exact format:
-{
-  "name": "Short, actionable ticket title",
-  "description": "Detailed description in Markdown format. Include:\\n- Context/background from the thread\\n- Requirements or acceptance criteria\\n- Any relevant technical details\\n- Link back to Slack thread (placeholder: {{SLACK_THREAD_URL}})",
-  "story_type": "feature" | "bug" | "chore",
-  "labels": ["array", "of", "relevant", "labels"],
-  "estimate": null | 1 | 2 | 3 | 5 | 8
-}
-
-Rules:
-- Title should be concise and start with a verb (e.g., "Add...", "Fix...", "Investigate...")
-- Default story_type to "feature" unless the thread clearly describes a bug or maintenance task
-- Only include labels that would genuinely help categorize the work
-- Only set estimate if the thread has enough detail to size it; otherwise null
-- Include all meaningful context from the thread in the description — the ticket should be understandable without reading the original Slack thread`;
+const MAX_ITERATIONS = 15;
 
 function formatThread(messages: SlackMessage[]): string {
   return messages
@@ -45,53 +25,67 @@ function formatThread(messages: SlackMessage[]): string {
     .join("\n");
 }
 
-export async function generateTicket(
-  messages: SlackMessage[]
-): Promise<ShortcutTicket> {
+export async function runAgent(
+  messages: SlackMessage[],
+  userInstruction: string
+): Promise<string> {
   const transcript = formatThread(messages);
 
-  const response = await callClaude(transcript);
-  try {
-    return parseTicket(response);
-  } catch {
-    // Retry once with a nudge
-    const retryResponse = await callClaude(
-      transcript +
-        "\n\n[SYSTEM: Your previous response was not valid JSON. Please respond with ONLY valid JSON, no markdown fences or extra text.]"
+  const conversationMessages: Anthropic.MessageParam[] = [
+    {
+      role: "user",
+      content: `Here is the Slack thread for context:\n\n${transcript}\n\n---\n\nUser's request: ${userInstruction}`,
+    },
+  ];
+
+  for (let i = 0; i < MAX_ITERATIONS; i++) {
+    const response = await anthropic.messages.create({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 4096,
+      system: SYSTEM_PROMPT,
+      tools,
+      messages: conversationMessages,
+    });
+
+    // Collect tool_use blocks
+    const toolUseBlocks = response.content.filter(
+      (block): block is Anthropic.ToolUseBlock => block.type === "tool_use"
     );
-    return parseTicket(retryResponse);
+
+    // If Claude is done (no tool calls), extract and return the text
+    if (response.stop_reason === "end_turn" || toolUseBlocks.length === 0) {
+      const textBlocks = response.content.filter(
+        (block): block is Anthropic.TextBlock => block.type === "text"
+      );
+      return (
+        textBlocks.map((b) => b.text).join("\n") ||
+        "Done — no response text."
+      );
+    }
+
+    // Claude wants to use tools — add its response to conversation
+    conversationMessages.push({
+      role: "assistant",
+      content: response.content,
+    });
+
+    // Execute each tool and collect results
+    const toolResults: Anthropic.ToolResultBlockParam[] = await Promise.all(
+      toolUseBlocks.map(async (toolUse) => {
+        const result = await executeTool(
+          toolUse.name,
+          toolUse.input as Record<string, unknown>
+        );
+        return {
+          type: "tool_result" as const,
+          tool_use_id: toolUse.id,
+          content: result,
+        };
+      })
+    );
+
+    conversationMessages.push({ role: "user", content: toolResults });
   }
-}
 
-async function callClaude(userMessage: string): Promise<string> {
-  const response = await anthropic.messages.create({
-    model: "claude-sonnet-4-20250514",
-    max_tokens: 1024,
-    system: SYSTEM_PROMPT,
-    messages: [{ role: "user", content: userMessage }],
-  });
-
-  const block = response.content[0];
-  if (block.type !== "text") {
-    throw new Error("Unexpected response type from Claude");
-  }
-  return block.text;
-}
-
-function parseTicket(raw: string): ShortcutTicket {
-  // Strip markdown code fences if present
-  const cleaned = raw.replace(/```json?\n?/g, "").replace(/```\n?/g, "").trim();
-  const parsed = JSON.parse(cleaned);
-
-  if (!parsed.name || !parsed.description || !parsed.story_type) {
-    throw new Error("Missing required fields in ticket response");
-  }
-
-  return {
-    name: parsed.name,
-    description: parsed.description,
-    story_type: parsed.story_type,
-    labels: Array.isArray(parsed.labels) ? parsed.labels : [],
-    estimate: parsed.estimate ?? null,
-  };
+  return "I hit the maximum number of steps. Here's what I was able to do — please check the results.";
 }
