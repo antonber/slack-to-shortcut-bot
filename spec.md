@@ -1,270 +1,271 @@
-# Slack-to-Shortcut Ticket Agent — Project Spec
+# Mission Control — Project Spec
 
 ## Overview
 
-A lightweight Node.js service that listens for a specific emoji reaction (🎫 `:ticket:`) on Slack messages, reads the full thread, uses Claude to generate a structured Shortcut ticket, creates it via the Shortcut API, and replies in the Slack thread with a link to the new story.
+Mission Control is a multi-source AI platform that unifies project data across Shortcut, GitHub, Notion, and Slack. It has two interfaces:
+
+1. **Slack bot** — mention `@shortbot` in any thread to ask questions, create stories, search across integrations, or get status updates. Powered by Claude's agentic tool_use loop.
+2. **Dashboard** (planned) — a Next.js web UI that surfaces activity feeds, metrics, and AI-generated summaries across all integrations.
+
+Both interfaces share the same integration layer: every data source implements the `IntegrationModule` interface, which exposes tools for the agent AND typed read methods for the dashboard.
 
 ## Architecture
 
-Single Express server with three integrations:
+```
+┌──────────────────┐     ┌──────────────────────────────────────────┐
+│    Slack User     │     │              Dashboard User               │
+│  @shortbot ...    │     │         (Cloudflare Access / API key)     │
+└────────┬─────────┘     └────────────────┬───────────────────────────┘
+         │                                │
+         ▼                                ▼
+┌──────────────────┐     ┌────────────────────────────────────────────┐
+│   packages/bot   │     │          packages/dashboard (planned)       │
+│   Express server │     │          Next.js App Router                 │
+│   Claude agent   │     │          Server Components                  │
+│      loop        │     │          /api/summarize                     │
+└────────┬─────────┘     └────────────────┬───────────────────────────┘
+         │                                │
+         │  tools + executeTool()         │  getActivityFeed()
+         │                                │  getSummaryMetrics()
+         ▼                                ▼
+┌────────────────────────────────────────────────────────────────────┐
+│                   packages/integrations                            │
+│                                                                    │
+│   ToolRegistry ──┬── Shortcut module (tools + reads + client)     │
+│                  ├── GitHub module    (planned)                    │
+│                  ├── Notion module    (planned)                    │
+│                  └── Slack data module (planned)                   │
+│                                                                    │
+│   fetch-utils: retry, backoff, timeout, in-memory TTL cache       │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+**Runtime:** Node.js 20+
+**Language:** TypeScript (strict mode, ESM with `"module": "nodenext"`)
+**Monorepo:** pnpm workspaces + Turborepo
+**Deployment:** Railway (Docker)
+
+## Core Pattern: IntegrationModule
+
+Every data source implements this interface:
+
+```typescript
+interface IntegrationModule {
+  name: string;                    // "shortcut", "github", etc.
+  description: string;             // Human-readable, used in system prompt
+  isConfigured: () => boolean;     // Checks env vars
+
+  // Agent tools (for bot)
+  tools: Anthropic.Tool[];
+  executeTool: (name: string, input: Record<string, unknown>) => Promise<string>;
+
+  // Dashboard reads (typed, structured)
+  getActivityFeed: (range: TimeRange) => Promise<ActivityEvent[]>;
+  getSummaryMetrics: (range: TimeRange) => Promise<Record<string, number>>;
+}
+```
+
+The **ToolRegistry** collects all configured modules, prefixes tool names (`shortcut_create_story`, `github_list_prs`), and handles dispatch. The bot's system prompt is generated dynamically from registered modules.
+
+## Monorepo Structure
 
 ```
-Slack (Events API) → Agent Server → Claude API → Shortcut API → Slack (Post Reply)
+├── packages/
+│   ├── integrations/              # Shared integration layer
+│   │   └── src/
+│   │       ├── types.ts           # IntegrationModule, ActivityEvent, TimeRange
+│   │       ├── registry.ts        # ToolRegistry class
+│   │       ├── fetch-utils.ts     # Retry/backoff/timeout/cache wrapper
+│   │       └── shortcut/          # Shortcut integration module
+│   │           ├── config.ts      # Env var validation
+│   │           ├── types.ts       # CreateStoryParams, UpdateStoryParams
+│   │           ├── client.ts      # ShortcutClient (HTTP API calls)
+│   │           ├── tools.ts       # Tool definitions + executor factory
+│   │           ├── reads.ts       # Dashboard data fetchers
+│   │           └── index.ts       # createShortcutModule() → IntegrationModule
+│   ├── bot/                       # Slack bot (Express + Claude agent)
+│   │   └── src/
+│   │       ├── index.ts           # Express server, signature verification, dedup
+│   │       ├── handler.ts         # Mention → agent → Slack reply
+│   │       ├── agent.ts           # Claude tool_use loop via ToolRegistry
+│   │       ├── system-prompt.ts   # Dynamic prompt from registry metadata
+│   │       ├── slack.ts           # Slack API (thread fetch, reply, permalink)
+│   │       └── types.ts           # SlackMessage, AppMentionEvent
+│   └── dashboard/                 # (Planned) Next.js Mission Control UI
+├── pnpm-workspace.yaml
+├── turbo.json
+├── tsconfig.base.json
+├── Dockerfile                     # Multi-stage monorepo build for bot
+└── .env.example
 ```
-
-**Runtime:** Node.js (>=18)
-**Framework:** Express
-**Deployment target:** Railway, Render, or any container host
-**Language:** TypeScript
 
 ## Environment Variables
 
 ```
-SLACK_BOT_TOKEN=xoxb-...          # Bot User OAuth Token (Slack app)
+# Required
+SLACK_BOT_TOKEN=xoxb-...          # Bot User OAuth Token
 SLACK_SIGNING_SECRET=...           # For verifying Slack request signatures
 ANTHROPIC_API_KEY=sk-ant-...       # Claude API key
 SHORTCUT_API_TOKEN=...             # Shortcut API token
-SHORTCUT_PROJECT_ID=...            # Default Shortcut project ID to assign stories to
-SHORTCUT_WORKFLOW_STATE_ID=...     # Default workflow state (e.g., "Unscheduled" or "Backlog")
+
+# Optional
+SHORTCUT_PROJECT_ID=...            # Default project for new stories
+SHORTCUT_WORKFLOW_STATE_ID=...     # Default workflow state (e.g., "Backlog")
 PORT=3000                          # Server port
+
+# Future integrations
+GITHUB_TOKEN=...                   # GitHub personal access token
+GITHUB_REPOS=org/repo1,org/repo2  # Allowed repos (comma-separated)
+GITHUB_ORG=...                     # Default GitHub org
+NOTION_TOKEN=...                   # Notion integration token
+NOTION_ALLOWED_DATABASES=...       # Allowed database IDs (comma-separated)
 ```
 
 ## Slack App Configuration
 
-The Slack app needs the following setup:
-
 ### OAuth Scopes (Bot Token)
-- `reactions:read` — detect reaction events
+- `app_mentions:read` — detect @shortbot mentions
 - `channels:history` — read messages in public channels
-- `groups:history` — read messages in private channels the bot is in
+- `groups:history` — read messages in private channels
 - `chat:write` — post replies in threads
 
 ### Event Subscriptions
-Subscribe to the following bot events:
-- `reaction_added`
+- `app_mention` — bot event
 
 ### Request URL
 `https://<your-domain>/slack/events`
 
-## File Structure
+## Bot Flow
 
-```
-├── src/
-│   ├── index.ts              # Express server, Slack event listener, request verification
-│   ├── slack.ts              # Slack API helpers (fetch thread, post reply)
-│   ├── shortcut.ts           # Shortcut API helpers (create story)
-│   ├── agent.ts              # Claude API call with prompt, parse structured output
-│   ├── handler.ts            # Main orchestration: thread → LLM → ticket → reply
-│   └── types.ts              # Shared TypeScript interfaces
-├── .env.example
-├── package.json
-├── tsconfig.json
-└── README.md
-```
+### 1. Receive Slack Event (`packages/bot/src/index.ts`)
 
-## Detailed Flow
+- Express POST at `/slack/events`
+- Verify request signature (HMAC SHA256 with 5-minute timestamp window)
+- Handle URL verification challenge
+- Filter for `app_mention` events
+- Deduplicate (in-memory Set, 5-minute TTL on `channel:event_ts`)
+- Return 200 immediately, process asynchronously
 
-### 1. Receive Slack Event (`src/index.ts`)
+### 2. Handle Mention (`packages/bot/src/handler.ts`)
 
-- Express POST endpoint at `/slack/events`
-- Verify request signature using `SLACK_SIGNING_SECRET` (use `@slack/events-api` or manual HMAC verification)
-- Handle Slack's URL verification challenge (`{ "type": "url_verification" }`) by returning the `challenge` field
-- For `reaction_added` events, check:
-  - `event.reaction === "ticket"` (the 🎫 emoji name)
-  - Ignore if the reaction was added by the bot itself (prevent loops)
-- If it matches, call the handler asynchronously (return 200 to Slack immediately to avoid timeout)
+1. Post acknowledgment: "🤖 On it..."
+2. Strip `<@botid>` from message text to get user instruction
+3. Fetch full thread via `conversations.replies` (paginated, handles reply-to-reply)
+4. Get thread permalink
+5. Run Claude agent with ToolRegistry
+6. Post-process response: replace `{{SLACK_THREAD_URL}}` placeholder, convert Markdown → Slack mrkdwn
+7. Post response to thread
 
-### 2. Fetch Thread (`src/slack.ts`)
+### 3. Agent Loop (`packages/bot/src/agent.ts`)
 
-```typescript
-async function fetchThread(channel: string, threadTs: string): Promise<SlackMessage[]>
-```
+- Formats thread into readable transcript with timestamps
+- Sends to Claude (`claude-sonnet-4-20250514`) with dynamic system prompt + registry tools
+- Loop (max 15 iterations):
+  - If Claude returns text → done, return response
+  - If Claude returns tool_use → execute all tools via `registry.executeTool()`, append results, continue
+- Tools are dispatched through the ToolRegistry which strips the prefix and routes to the correct module
 
-- Use Slack Web API `conversations.replies` with `channel` and `ts` (the thread parent `ts`)
-- The `event.item.ts` from the reaction event gives you the message timestamp
-- If the reacted message is not a thread parent, first fetch the message to get its `thread_ts`, then fetch the full thread
-- Return array of messages with: `user`, `text`, `ts`, `files` (note file names if any)
-- Handle pagination if thread is very long (>100 messages)
+### 4. System Prompt (`packages/bot/src/system-prompt.ts`)
 
-### 3. Generate Ticket via Claude (`src/agent.ts`)
+Generated dynamically from `registry.getModuleDescriptions()`. Includes:
+- Bot identity and available integrations
+- Slack mrkdwn formatting rules (not Markdown)
+- Story link format guidance
+- Tool usage tips (prefixed names like `shortcut_list_members`)
+- Behavioral guidelines (be conversational, use tools proactively, default smartly)
 
-```typescript
-async function generateTicket(messages: SlackMessage[]): Promise<ShortcutTicket>
-```
+## Shortcut Integration
 
-- Format thread messages into a readable transcript:
-  ```
-  @username (12:34 PM): message text
-  @username2 (12:35 PM): reply text
-  ```
-- Call the Anthropic API (`claude-sonnet-4-20250514`) with the following system prompt:
+### Tools (9 total, prefixed `shortcut_*`)
 
-```
-You are a project management assistant. Given a Slack thread, create a Shortcut (project management tool) story.
+| Tool | Description |
+|------|-------------|
+| `shortcut_create_story` | Create a story with name, description, type, labels, owners, estimate |
+| `shortcut_update_story` | Update any field on an existing story |
+| `shortcut_get_story` | Get full story details by ID |
+| `shortcut_search_stories` | Search using Shortcut query syntax |
+| `shortcut_add_comment` | Add a comment to a story |
+| `shortcut_list_members` | List workspace members (cached 5min) |
+| `shortcut_list_workflow_states` | List all workflow states (cached 5min) |
+| `shortcut_list_labels` | List all labels (cached 5min) |
+| `shortcut_list_projects` | List all projects (cached 5min) |
 
-Analyze the thread to determine:
-1. What is being requested or discussed
-2. Any technical details or requirements mentioned
-3. Who is involved and any assignments implied
-4. Priority/urgency signals
+### Dashboard Reads
+- `getActivityFeed(range)` — recently updated stories in time range
+- `getSummaryMetrics(range)` — stories created/completed counts
 
-Respond with ONLY valid JSON in this exact format:
-{
-  "name": "Short, actionable ticket title",
-  "description": "Detailed description in Markdown format. Include:\n- Context/background from the thread\n- Requirements or acceptance criteria\n- Any relevant technical details\n- Link back to Slack thread (placeholder: {{SLACK_THREAD_URL}})",
-  "story_type": "feature" | "bug" | "chore",
-  "labels": ["array", "of", "relevant", "labels"],
-  "estimate": null | 1 | 2 | 3 | 5 | 8
-}
+### Client
+HTTP client wrapping Shortcut API v3 (`https://api.app.shortcut.com/api/v3`), using `fetchWithRetry` for reliability. Reference data endpoints (members, labels, workflows, projects) use in-memory TTL cache (5 minutes).
 
-Rules:
-- Title should be concise and start with a verb (e.g., "Add...", "Fix...", "Investigate...")
-- Default story_type to "feature" unless the thread clearly describes a bug or maintenance task
-- Only include labels that would genuinely help categorize the work
-- Only set estimate if the thread has enough detail to size it; otherwise null
-- Include all meaningful context from the thread in the description — the ticket should be understandable without reading the original Slack thread
-```
+## Reliability Layer (`fetch-utils.ts`)
 
-- Parse the JSON response. If parsing fails, retry once with a nudge to return valid JSON.
-- Return typed `ShortcutTicket` object.
-
-### 4. Create Shortcut Story (`src/shortcut.ts`)
-
-```typescript
-async function createStory(ticket: ShortcutTicket): Promise<{ id: number; url: string }>
-```
-
-- POST to `https://api.app.shortcut.com/api/v3/stories`
-- Headers: `{ "Content-Type": "application/json", "Shortcut-Token": SHORTCUT_API_TOKEN }`
-- Body:
-  ```json
-  {
-    "name": "<ticket.name>",
-    "description": "<ticket.description>",
-    "story_type": "<ticket.story_type>",
-    "project_id": "<SHORTCUT_PROJECT_ID as number>",
-    "workflow_state_id": "<SHORTCUT_WORKFLOW_STATE_ID as number>",
-    "labels": [{ "name": "<label>" }],
-    "estimate": "<ticket.estimate or omit if null>"
-  }
-  ```
-- Labels: Shortcut auto-creates labels if they don't exist, so just pass `{ name: "label-name" }` objects
-- Return the story `id` and construct the URL: `https://app.shortcut.com/story/${id}`
-
-### 5. Reply in Slack Thread (`src/slack.ts`)
-
-```typescript
-async function postThreadReply(channel: string, threadTs: string, text: string): Promise<void>
-```
-
-- Use `chat.postMessage` with `channel`, `thread_ts`, and `text`
-- Message format:
-  ```
-  ✅ Shortcut ticket created: *<ticket.name>*
-  <story_url>
-  Type: <story_type> · Estimate: <estimate or "Unestimated">
-  ```
-- Also replace the `{{SLACK_THREAD_URL}}` placeholder in the Shortcut description with the actual Slack thread permalink (construct from channel + thread_ts, or use `chat.getPermalink`)
-
-### 6. Orchestration (`src/handler.ts`)
-
-```typescript
-async function handleTicketReaction(event: ReactionAddedEvent): Promise<void>
-```
-
-This is the main pipeline:
-
-1. Fetch the thread
-2. Generate the ticket via Claude
-3. Get the Slack thread permalink
-4. Replace `{{SLACK_THREAD_URL}}` in the ticket description with the actual permalink
-5. Create the Shortcut story
-6. Reply in the Slack thread with the story link
-7. If any step fails, reply in the thread with an error message: "❌ Failed to create ticket: <reason>"
-
-## Types (`src/types.ts`)
-
-```typescript
-interface SlackMessage {
-  user: string;
-  text: string;
-  ts: string;
-  files?: { name: string; mimetype: string }[];
-}
-
-interface ShortcutTicket {
-  name: string;
-  description: string;
-  story_type: "feature" | "bug" | "chore";
-  labels: string[];
-  estimate: number | null;
-}
-
-interface ReactionAddedEvent {
-  type: "reaction_added";
-  user: string;
-  reaction: string;
-  item: {
-    type: "message";
-    channel: string;
-    ts: string;
-  };
-  event_ts: string;
-}
-```
+All integration HTTP calls go through `fetchWithRetry`:
+- **Retry:** 3 attempts with exponential backoff (200ms, 400ms, 800ms)
+- **Timeout:** 10 seconds per request (AbortController)
+- **Cache:** Optional in-memory TTL cache for read-heavy endpoints
+- **Smart retry:** No retry on 4xx errors (except 429 rate limiting)
 
 ## Error Handling
 
-- **Slack signature verification fails:** Return 401, log warning
-- **Thread fetch fails:** Reply in channel (not thread) that the bot couldn't read the thread. Likely a permissions issue — message should say to invite the bot to the channel.
-- **Claude API fails / returns invalid JSON:** Retry once. If still fails, reply in thread with error.
-- **Shortcut API fails:** Reply in thread with error and the raw ticket content so it's not lost.
-- **Duplicate detection:** Track processed `event.item.ts + event.item.channel` combos in memory (a simple Set) to avoid creating duplicate tickets if Slack retries the event. Clear entries after 5 minutes.
+- **Slack signature verification fails:** 401 response, logged warning
+- **Thread fetch fails:** Error posted to Slack thread
+- **Claude API fails:** Error posted to thread with reason
+- **Tool execution fails:** JSON error returned to Claude, agent can retry or report
+- **Duplicate events:** Silently dropped (in-memory dedup with 5-minute TTL)
+- **Unconfigured integrations:** Silently skipped at registration (ToolRegistry only registers modules where `isConfigured()` returns true)
 
-## Dependencies
+## Development
 
-```json
-{
-  "dependencies": {
-    "@anthropic-ai/sdk": "latest",
-    "@slack/web-api": "latest",
-    "express": "^4",
-    "dotenv": "latest"
-  },
-  "devDependencies": {
-    "@types/express": "latest",
-    "@types/node": "latest",
-    "typescript": "latest",
-    "tsx": "latest"
-  }
-}
+```bash
+pnpm install                              # Install all workspace dependencies
+pnpm turbo build                          # Build all packages
+pnpm turbo typecheck                      # TypeScript check (tsc --noEmit)
+pnpm turbo test                           # Run all tests (vitest)
+pnpm turbo dev --filter=@mission-control/bot  # Dev server with hot reload
 ```
 
-## Scripts
-
-```json
-{
-  "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "build": "tsc",
-    "start": "node dist/index.js"
-  }
-}
+For local Slack testing, expose the server with a tunnel:
+```bash
+ngrok http 3000        # or: cloudflared tunnel --url http://localhost:3000
 ```
+Then set your Slack app's event subscription URL to the tunnel URL + `/slack/events`.
 
-## Local Development
+## Deployment
 
-1. `npm install`
-2. Copy `.env.example` to `.env` and fill in values
-3. Use ngrok (`ngrok http 3000`) to expose local server for Slack events
-4. Set Slack app Event Subscription URL to `https://<ngrok-url>/slack/events`
-5. `npm run dev`
-6. React with 🎫 on any message in a channel the bot is in
+Railway auto-deploys from `main` via Docker:
+- Multi-stage build: `node:20-slim` + `corepack enable` for pnpm
+- Builder stage: `pnpm install` → `pnpm turbo build --filter=@mission-control/bot`
+- Runtime stage: copies only `dist/` + prod deps
+- Entry: `node packages/bot/dist/index.js`
 
-## Future Enhancements (Out of Scope for V1)
+## Roadmap
 
-- **Custom emoji triggers:** Support multiple emojis mapping to different story types or workflows
-- **Shortcut team/member assignment:** Map Slack users to Shortcut members and auto-assign
-- **Interactive refinement:** After posting the ticket link, add a Slack Block Kit button "Edit before saving" that opens a modal to tweak the ticket before it's actually created
-- **Label taxonomy:** Maintain a config file of valid labels so Claude picks from a known set
-- **Multiple workspace support:** Support multiple Slack workspaces / Shortcut orgs
+### Phase 2: GitHub Integration
+- Tools: `github_list_prs`, `github_get_pr`, `github_list_issues`, `github_search_issues`, `github_recent_commits`
+- Reads: merged PRs, closed issues, avg merge time
+- Scoped to allowed repos via `GITHUB_REPOS` env var
+
+### Phase 3: Notion Integration
+- Tools: `notion_search`, `notion_get_page`, `notion_query_database`
+- Reads: recently edited pages
+- Scoped to allowed databases via `NOTION_ALLOWED_DATABASES`
+
+### Phase 4: Slack Data Integration
+- Tools: `slack_search_messages`, `slack_get_channel_history`
+- Additional OAuth scopes: `search:read`, `channels:read`
+- Reads: active threads, message counts
+
+### Phase 5: Dashboard MVP
+- Next.js App Router + Tailwind + shadcn/ui + Tremor (charts)
+- Overview page with integration cards from `getSummaryMetrics()`
+- Unified activity timeline from `getActivityFeed()`
+- Time range selector (day/week/month)
+- Per-integration deep-dive pages
+- `/api/summarize` endpoint: Claude summary of aggregated data
+- Auth required from day 1 (Cloudflare Access or API key)
+
+### Phase 6: Polish + BigQuery
+- BigQuery integration for product metrics
+- PostgreSQL for historical data caching
+- Webhook ingestion for real-time updates
+- Advanced analytics (velocity, stale story scoring)
