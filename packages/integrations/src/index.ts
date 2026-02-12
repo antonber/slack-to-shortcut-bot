@@ -6,3 +6,4 @@ export type {
 } from "./types.js";
 export { fetchWithRetry, clearCache } from "./fetch-utils.js";
 export { createShortcutModule } from "./shortcut/index.js";
+export { createGitHubModule } from "./github/index.js";

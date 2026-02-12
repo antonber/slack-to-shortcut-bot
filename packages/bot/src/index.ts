@@ -4,6 +4,7 @@ import crypto from "crypto";
 import {
   ToolRegistry,
   createShortcutModule,
+  createGitHubModule,
 } from "@mission-control/integrations";
 import type { AppMentionEvent } from "./types.js";
 import { createHandler } from "./handler.js";
@@ -11,6 +12,7 @@ import { createHandler } from "./handler.js";
 // --- Set up integrations ---
 const registry = new ToolRegistry();
 registry.register(createShortcutModule());
+registry.register(createGitHubModule());
 
 const handleMention = createHandler(registry);
 
