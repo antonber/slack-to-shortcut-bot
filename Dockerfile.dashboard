@@ -1,0 +1,25 @@
+FROM node:20-slim AS builder
+
+RUN corepack enable
+WORKDIR /app
+
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json turbo.json ./
+COPY packages/integrations/package.json packages/integrations/
+COPY packages/dashboard/package.json packages/dashboard/
+RUN pnpm install --frozen-lockfile
+
+COPY tsconfig.base.json ./
+COPY packages/integrations/ packages/integrations/
+COPY packages/dashboard/ packages/dashboard/
+RUN pnpm turbo build --filter=@mission-control/dashboard
+
+FROM node:20-slim
+
+WORKDIR /app
+ENV NODE_ENV=production
+
+COPY --from=builder /app/packages/dashboard/.next/standalone ./
+COPY --from=builder /app/packages/dashboard/.next/static ./packages/dashboard/.next/static
+
+EXPOSE 3000
+CMD ["node", "packages/dashboard/server.js"]

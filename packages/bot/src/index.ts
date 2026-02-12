@@ -5,6 +5,8 @@ import {
   ToolRegistry,
   createShortcutModule,
   createGitHubModule,
+  createNotionModule,
+  createSlackDataModule,
 } from "@mission-control/integrations";
 import type { AppMentionEvent } from "./types.js";
 import { createHandler } from "./handler.js";
@@ -13,6 +15,8 @@ import { createHandler } from "./handler.js";
 const registry = new ToolRegistry();
 registry.register(createShortcutModule());
 registry.register(createGitHubModule());
+registry.register(createNotionModule());
+registry.register(createSlackDataModule());
 
 const handleMention = createHandler(registry);
 

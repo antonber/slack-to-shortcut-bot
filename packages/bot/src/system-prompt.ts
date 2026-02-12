@@ -65,5 +65,16 @@ You can combine data across integrations to answer complex questions. For exampl
 
 - Repos are specified as "owner/repo" (e.g., "acme/api"). If only one repo is configured, it's used by default.
 - github_search_issues uses GitHub search syntax: is:pr, is:issue, is:merged, is:open, is:closed, author:name, label:name
-- Always include GitHub links in Slack format: <url|#number> when referencing PRs or issues.`;
+- Always include GitHub links in Slack format: <url|#number> when referencing PRs or issues.
+
+## Notion Tips
+
+- notion_search finds pages and databases by text.
+- notion_get_page returns simplified properties (not raw Notion API objects).
+- notion_query_database requires a database ID — use notion_search first to find it.
+
+## Slack Data Tips
+
+- slack_data_search_messages uses Slack search syntax: "in:#channel", "from:@user", "has:link", date ranges.
+- slack_data_get_channel_history requires a channel ID (e.g., C01ABCDEF), not a channel name.`;
 }

@@ -15,7 +15,9 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "latest",
-    "@octokit/rest": "latest"
+    "@notionhq/client": "latest",
+    "@octokit/rest": "latest",
+    "@slack/web-api": "latest"
   },
   "devDependencies": {
     "typescript": "latest",
