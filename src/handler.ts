@@ -2,6 +2,22 @@ import { AppMentionEvent } from "./types";
 import { fetchThread, postThreadReply, getPermalink, getBotUserId } from "./slack";
 import { runAgent } from "./agent";
 
+/**
+ * Convert Markdown formatting to Slack mrkdwn.
+ * Claude tends to output **bold** and ## headers despite prompt instructions.
+ */
+function markdownToSlackMrkdwn(text: string): string {
+  return (
+    text
+      // Headers → bold (### first, then ##, then #)
+      .replace(/^#{1,3}\s+(.+)$/gm, "*$1*")
+      // **bold** → *bold* (but not inside URLs/links)
+      .replace(/\*\*(.+?)\*\*/g, "*$1*")
+      // [text](url) → <url|text> (but skip if already in Slack link format)
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "<$2|$1>")
+  );
+}
+
 export async function handleMention(event: AppMentionEvent): Promise<void> {
   const { channel } = event;
   const threadTs = event.thread_ts ?? event.ts;
@@ -28,7 +44,10 @@ export async function handleMention(event: AppMentionEvent): Promise<void> {
     // 5. Replace any Slack URL placeholders the agent may have used
     response = response.replace(/\{\{SLACK_THREAD_URL\}\}/g, permalink);
 
-    // 6. Post the agent's response
+    // 6. Convert Markdown → Slack mrkdwn (Claude sometimes ignores prompt instructions)
+    response = markdownToSlackMrkdwn(response);
+
+    // 7. Post the agent's response
     await postThreadReply(channel, threadTs, response);
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Unknown error";
