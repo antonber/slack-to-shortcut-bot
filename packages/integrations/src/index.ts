@@ -3,6 +3,8 @@ export type {
   IntegrationModule,
   TimeRange,
   ActivityEvent,
+  Alert,
+  AlertItem,
 } from "./types.js";
 export { fetchWithRetry, clearCache } from "./fetch-utils.js";
 export { createShortcutModule } from "./shortcut/index.js";

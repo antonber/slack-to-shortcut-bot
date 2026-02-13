@@ -1,5 +1,5 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import type { IntegrationModule, TimeRange, ActivityEvent } from "./types.js";
+import type { IntegrationModule, TimeRange, ActivityEvent, Alert } from "./types.js";
 
 export class ToolRegistry {
   private modules = new Map<string, IntegrationModule>();
@@ -70,5 +70,24 @@ export class ToolRegistry {
       result[name] = await mod.getSummaryMetrics(range);
     }
     return result;
+  }
+
+  /** Aggregates alerts from all modules, warnings sorted before info */
+  async getAlerts(range: TimeRange): Promise<Alert[]> {
+    const results = await Promise.all(
+      Array.from(this.modules.values()).map(async (m) => {
+        if (!m.getAlerts) return [];
+        try {
+          return await m.getAlerts(range);
+        } catch {
+          return [];
+        }
+      })
+    );
+    return results.flat().sort((a, b) => {
+      if (a.severity === "warning" && b.severity !== "warning") return -1;
+      if (a.severity !== "warning" && b.severity === "warning") return 1;
+      return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
+    });
   }
 }

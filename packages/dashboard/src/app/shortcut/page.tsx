@@ -24,6 +24,56 @@ function RangeSelector({ current, base }: { current: string; base: string }) {
   );
 }
 
+/** Categorize shortcut metrics into sections */
+function categorizeMetrics(metrics: Record<string, number>) {
+  const activity: [string, number][] = [];
+  const currentState: [string, number][] = [];
+  const health: [string, number][] = [];
+
+  for (const [key, value] of Object.entries(metrics)) {
+    if (key === "stories_created" || key === "stories_completed") {
+      activity.push([key, value]);
+    } else if (key === "stories_stuck" || key === "stories_unestimated") {
+      health.push([key, value]);
+    } else {
+      currentState.push([key, value]);
+    }
+  }
+
+  return { activity, currentState, health };
+}
+
+function MetricCard({
+  label,
+  value,
+  highlight,
+}: {
+  label: string;
+  value: number;
+  highlight?: boolean;
+}) {
+  return (
+    <div
+      className={`rounded-lg border p-4 ${
+        highlight && value > 0
+          ? "border-amber-200 bg-amber-50"
+          : "border-gray-200 bg-white"
+      }`}
+    >
+      <dt className="text-xs text-gray-500 uppercase tracking-wider">
+        {label.replace(/_/g, " ")}
+      </dt>
+      <dd
+        className={`text-3xl font-bold mt-2 ${
+          highlight && value > 0 ? "text-amber-700" : "text-gray-900"
+        }`}
+      >
+        {value}
+      </dd>
+    </div>
+  );
+}
+
 export default async function ShortcutPage({
   searchParams,
 }: {
@@ -51,6 +101,8 @@ export default async function ShortcutPage({
     shortcut.getActivityFeed(timeRange),
   ]);
 
+  const { activity, currentState, health } = categorizeMetrics(metrics);
+
   return (
     <div>
       <div className="flex items-center justify-between mb-8">
@@ -61,19 +113,44 @@ export default async function ShortcutPage({
         <RangeSelector current={range} base="/shortcut" />
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-        {Object.entries(metrics).map(([key, value]) => (
-          <div
-            key={key}
-            className="bg-white rounded-lg border border-gray-200 p-4"
-          >
-            <dt className="text-xs text-gray-500 uppercase tracking-wider">
-              {key.replace(/_/g, " ")}
-            </dt>
-            <dd className="text-3xl font-bold text-gray-900 mt-2">{value}</dd>
+      {activity.length > 0 && (
+        <div className="mb-6">
+          <h2 className="text-sm font-medium text-gray-500 uppercase tracking-wider mb-3">
+            Activity
+          </h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {activity.map(([key, value]) => (
+              <MetricCard key={key} label={key} value={value} />
+            ))}
           </div>
-        ))}
-      </div>
+        </div>
+      )}
+
+      {currentState.length > 0 && (
+        <div className="mb-6">
+          <h2 className="text-sm font-medium text-gray-500 uppercase tracking-wider mb-3">
+            Current State
+          </h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {currentState.map(([key, value]) => (
+              <MetricCard key={key} label={key} value={value} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {health.length > 0 && (
+        <div className="mb-6">
+          <h2 className="text-sm font-medium text-gray-500 uppercase tracking-wider mb-3">
+            Health
+          </h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {health.map(([key, value]) => (
+              <MetricCard key={key} label={key} value={value} highlight />
+            ))}
+          </div>
+        </div>
+      )}
 
       <h2 className="text-lg font-semibold text-gray-900 mb-4">
         Recent Activity

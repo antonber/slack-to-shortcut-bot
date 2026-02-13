@@ -24,6 +24,25 @@ function RangeSelector({ current, base }: { current: string; base: string }) {
   );
 }
 
+function ShortcutBadges({ linkedStories }: { linkedStories: number[] }) {
+  if (linkedStories.length === 0) return null;
+  return (
+    <span className="inline-flex gap-1 ml-2">
+      {linkedStories.map((id) => (
+        <a
+          key={id}
+          href={`https://app.shortcut.com/story/${id}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex px-1.5 py-0.5 text-xs font-medium rounded bg-purple-100 text-purple-700 hover:bg-purple-200"
+        >
+          sc-{id}
+        </a>
+      ))}
+    </span>
+  );
+}
+
 export default async function GitHubPage({
   searchParams,
 }: {
@@ -87,21 +106,29 @@ export default async function GitHubPage({
           </div>
         ) : (
           <ul className="divide-y divide-gray-100">
-            {events.slice(0, 30).map((event) => (
-              <li key={event.id} className="px-6 py-3">
-                <a
-                  href={event.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-sm font-medium text-gray-900 hover:text-blue-600"
-                >
-                  {event.title}
-                </a>
-                <p className="text-xs text-gray-500 mt-0.5">
-                  {event.type.replace(/_/g, " ")} &middot; {event.actor}
-                </p>
-              </li>
-            ))}
+            {events.slice(0, 30).map((event) => {
+              const linkedStories = Array.isArray(event.metadata?.linkedStories)
+                ? (event.metadata.linkedStories as number[])
+                : [];
+              return (
+                <li key={event.id} className="px-6 py-3">
+                  <div className="flex items-center">
+                    <a
+                      href={event.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm font-medium text-gray-900 hover:text-blue-600"
+                    >
+                      {event.title}
+                    </a>
+                    <ShortcutBadges linkedStories={linkedStories} />
+                  </div>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {event.type.replace(/_/g, " ")} &middot; {event.actor}
+                  </p>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>

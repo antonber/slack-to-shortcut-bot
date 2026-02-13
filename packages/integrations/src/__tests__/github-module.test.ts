@@ -83,6 +83,16 @@ describe("GitHub IntegrationModule", () => {
     expect(metrics).toEqual({});
   });
 
+  it("returns empty alerts when unconfigured", async () => {
+    delete process.env.GITHUB_TOKEN;
+    const mod = createGitHubModule();
+    const alerts = await mod.getAlerts!({
+      since: "2024-01-01",
+      until: "2024-12-31",
+    });
+    expect(alerts).toEqual([]);
+  });
+
   it("integrates with ToolRegistry correctly", async () => {
     process.env.GITHUB_TOKEN = "ghp_test";
     const { ToolRegistry } = await import("../registry.js");

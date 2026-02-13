@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { getRegistry, getTimeRange } from "@/lib/integrations";
+import { AiSummary } from "./components/AiSummary";
+import { AlertsPanel } from "./components/AlertsPanel";
 
 export const dynamic = "force-dynamic";
 
@@ -33,7 +35,10 @@ export default async function OverviewPage({
   const range = params.range ?? "week";
   const timeRange = getTimeRange(range);
   const registry = getRegistry();
-  const allMetrics = await registry.getSummaryMetrics(timeRange);
+  const [allMetrics, alerts] = await Promise.all([
+    registry.getSummaryMetrics(timeRange),
+    registry.getAlerts(timeRange),
+  ]);
 
   const SOURCE_META: Record<string, { label: string; href: string; color: string }> = {
     shortcut: { label: "Shortcut", href: "/shortcut", color: "bg-purple-500" },
@@ -48,6 +53,10 @@ export default async function OverviewPage({
         <h1 className="text-2xl font-bold text-gray-900">Overview</h1>
         <RangeSelector current={range} />
       </div>
+
+      <AiSummary range={range} />
+
+      <AlertsPanel alerts={alerts} />
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {Object.entries(allMetrics).map(([source, metrics]) => {

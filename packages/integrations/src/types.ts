@@ -19,6 +19,25 @@ export interface ActivityEvent {
   metadata: Record<string, unknown>;
 }
 
+/** A single item within an alert (e.g. a stuck story, a stale PR) */
+export interface AlertItem {
+  id: string;
+  title: string;
+  url: string;
+  metadata: Record<string, unknown>;
+}
+
+/** An actionable alert surfaced by an integration */
+export interface Alert {
+  id: string;
+  source: string;
+  severity: "warning" | "info";
+  title: string;
+  description: string;
+  items: AlertItem[];
+  timestamp: string;
+}
+
 /** Every integration module must conform to this interface */
 export interface IntegrationModule {
   name: string;
@@ -32,4 +51,5 @@ export interface IntegrationModule {
   // Dashboard reads (typed, structured)
   getActivityFeed: (range: TimeRange) => Promise<ActivityEvent[]>;
   getSummaryMetrics: (range: TimeRange) => Promise<Record<string, number>>;
+  getAlerts?: (range: TimeRange) => Promise<Alert[]>;
 }

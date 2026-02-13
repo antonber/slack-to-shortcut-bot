@@ -2,6 +2,7 @@ export interface ShortcutConfig {
   token: string;
   defaultProjectId?: number;
   defaultWorkflowStateId?: number;
+  workflowName?: string;
 }
 
 export function loadShortcutConfig(): ShortcutConfig | null {
@@ -16,5 +17,6 @@ export function loadShortcutConfig(): ShortcutConfig | null {
     defaultWorkflowStateId: process.env.SHORTCUT_WORKFLOW_STATE_ID
       ? Number(process.env.SHORTCUT_WORKFLOW_STATE_ID)
       : undefined,
+    workflowName: process.env.SHORTCUT_WORKFLOW_NAME || undefined,
   };
 }

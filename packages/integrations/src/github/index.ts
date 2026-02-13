@@ -25,5 +25,8 @@ export function createGitHubModule(): IntegrationModule {
     getSummaryMetrics: reads
       ? (range) => reads.getSummaryMetrics(range)
       : async () => ({}),
+    getAlerts: reads
+      ? (range) => reads.getAlerts(range)
+      : async () => [],
   };
 }

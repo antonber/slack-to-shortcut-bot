@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { ToolRegistry } from "../registry.js";
-import type { IntegrationModule } from "../types.js";
+import type { IntegrationModule, Alert } from "../types.js";
 
 function createMockModule(
   overrides: Partial<IntegrationModule> = {}
@@ -158,5 +158,75 @@ describe("ToolRegistry", () => {
     expect(feed).toHaveLength(2);
     expect(feed[0].title).toBe("New");
     expect(feed[1].title).toBe("Old");
+  });
+
+  it("getAlerts returns empty when no modules implement it", async () => {
+    const registry = new ToolRegistry();
+    registry.register(createMockModule({ name: "shortcut" }));
+    const alerts = await registry.getAlerts({
+      since: "2024-01-01",
+      until: "2024-12-31",
+    });
+    expect(alerts).toEqual([]);
+  });
+
+  it("getAlerts aggregates and sorts warnings before info", async () => {
+    const infoAlert: Alert = {
+      id: "info-1",
+      source: "shortcut",
+      severity: "info",
+      title: "Info alert",
+      description: "An info",
+      items: [],
+      timestamp: "2024-06-01T00:00:00Z",
+    };
+    const warningAlert: Alert = {
+      id: "warn-1",
+      source: "github",
+      severity: "warning",
+      title: "Warning alert",
+      description: "A warning",
+      items: [],
+      timestamp: "2024-01-01T00:00:00Z",
+    };
+
+    const registry = new ToolRegistry();
+    registry.register(
+      createMockModule({
+        name: "shortcut",
+        getAlerts: async () => [infoAlert],
+      })
+    );
+    registry.register(
+      createMockModule({
+        name: "github",
+        getAlerts: async () => [warningAlert],
+      })
+    );
+
+    const alerts = await registry.getAlerts({
+      since: "2024-01-01",
+      until: "2024-12-31",
+    });
+    expect(alerts).toHaveLength(2);
+    expect(alerts[0].severity).toBe("warning");
+    expect(alerts[1].severity).toBe("info");
+  });
+
+  it("getAlerts gracefully handles module errors", async () => {
+    const registry = new ToolRegistry();
+    registry.register(
+      createMockModule({
+        name: "broken",
+        getAlerts: async () => {
+          throw new Error("API down");
+        },
+      })
+    );
+    const alerts = await registry.getAlerts({
+      since: "2024-01-01",
+      until: "2024-12-31",
+    });
+    expect(alerts).toEqual([]);
   });
 });

@@ -1,5 +1,15 @@
 import type { GitHubClient } from "./client.js";
-import type { TimeRange, ActivityEvent } from "../types.js";
+import type { TimeRange, ActivityEvent, Alert } from "../types.js";
+
+/** Extracts Shortcut story IDs from text like [sc-1234], sc-1234, SC-42 */
+export function parseShortcutRefs(text: string): number[] {
+  const matches = text.matchAll(/\[?[sS][cC]-(\d+)\]?/g);
+  const ids = new Set<number>();
+  for (const match of matches) {
+    ids.add(Number(match[1]));
+  }
+  return [...ids];
+}
 
 /** Creates dashboard read functions bound to a GitHubClient instance */
 export function createReads(client: GitHubClient) {
@@ -14,6 +24,7 @@ export function createReads(client: GitHubClient) {
         );
 
         for (const pr of mergedPRs) {
+          const linkedStories = parseShortcutRefs(pr.title);
           events.push({
             id: `github-pr-${repo}-${pr.number}`,
             source: "github",
@@ -23,7 +34,7 @@ export function createReads(client: GitHubClient) {
             actor: pr.user,
             timestamp: pr.closed_at ?? pr.updated_at,
             url: pr.url,
-            metadata: { repo, number: pr.number },
+            metadata: { repo, number: pr.number, linkedStories },
           });
         }
 
@@ -102,6 +113,38 @@ export function createReads(client: GitHubClient) {
           ? Math.round(total_merge_hours / prs_merged)
           : 0,
       };
+    },
+
+    async getAlerts(_range: TimeRange): Promise<Alert[]> {
+      const alerts: Alert[] = [];
+      const FIVE_DAYS_MS = 5 * 24 * 60 * 60 * 1000;
+      const now = Date.now();
+
+      for (const repo of client.allowedRepos) {
+        const openPRs = await client.listPRs(repo, { state: "open", per_page: 50 });
+        const stalePRs = openPRs.filter(
+          (pr) => !pr.draft && now - new Date(pr.created_at).getTime() > FIVE_DAYS_MS
+        );
+
+        if (stalePRs.length > 0) {
+          alerts.push({
+            id: `github-stale-prs-${repo}`,
+            source: "github",
+            severity: "warning",
+            title: `${stalePRs.length} stale PR${stalePRs.length === 1 ? "" : "s"} in ${repo.split("/")[1] ?? repo}`,
+            description: "Open non-draft PRs created more than 5 days ago",
+            items: stalePRs.map((pr) => ({
+              id: String(pr.number),
+              title: pr.title,
+              url: pr.url,
+              metadata: { createdAt: pr.created_at, author: pr.user },
+            })),
+            timestamp: new Date().toISOString(),
+          });
+        }
+      }
+
+      return alerts;
     },
   };
 }

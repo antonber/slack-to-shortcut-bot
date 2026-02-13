@@ -11,9 +11,10 @@ export async function POST(request: NextRequest) {
     const timeRange = getTimeRange(range);
     const registry = getRegistry();
 
-    const [events, allMetrics] = await Promise.all([
+    const [events, allMetrics, alerts] = await Promise.all([
       registry.getActivityFeed(timeRange),
       registry.getSummaryMetrics(timeRange),
+      registry.getAlerts(timeRange),
     ]);
 
     const dataContext = `
@@ -21,6 +22,14 @@ Time range: ${timeRange.since} to ${timeRange.until}
 
 Metrics by integration:
 ${JSON.stringify(allMetrics, null, 2)}
+
+Alerts (${alerts.length}):
+${alerts
+  .map(
+    (a) =>
+      `- [${a.severity}] ${a.source}: ${a.title} — ${a.description} (${a.items.length} items)`
+  )
+  .join("\n")}
 
 Recent activity (${events.length} events):
 ${events
@@ -38,7 +47,7 @@ ${events
       messages: [
         {
           role: "user",
-          content: `You are a project intelligence assistant. Summarize this team activity data into a concise, actionable overview. Highlight key trends, notable activity, and anything that might need attention. Keep it to 2-3 short paragraphs.\n\n${dataContext}`,
+          content: `You are a project intelligence assistant. Summarize this team activity data into a concise, actionable overview. Highlight key trends, notable activity, and anything that might need attention — especially any active alerts. Keep it to 2-3 short paragraphs.\n\n${dataContext}`,
         },
       ],
     });

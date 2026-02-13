@@ -7,7 +7,7 @@ import { createReads } from "./reads.js";
 export function createShortcutModule(): IntegrationModule {
   const config = loadShortcutConfig();
   const client = config ? new ShortcutClient(config) : null;
-  const reads = client ? createReads(client) : null;
+  const reads = client && config ? createReads(client, config) : null;
   const executor = client
     ? createExecutor(client)
     : async () => JSON.stringify({ error: "Shortcut not configured" });
@@ -25,5 +25,8 @@ export function createShortcutModule(): IntegrationModule {
     getSummaryMetrics: reads
       ? (range) => reads.getSummaryMetrics(range)
       : async () => ({}),
+    getAlerts: reads
+      ? (range) => reads.getAlerts(range)
+      : async () => [],
   };
 }
